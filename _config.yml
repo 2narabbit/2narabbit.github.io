@@ -1,0 +1,17 @@
+# Setup
+title:		  Spring Framework Study
+tagline:      To be a web developer. go for it!
+baseurl:      ""
+paginate:     1
+
+# About/contact
+author:
+  name:       2narabbit
+  url:        https://2narabbit.github.io
+
+# Gems
+gems:
+  - jekyll-paginate
+
+#Others
+markdown: kramdown

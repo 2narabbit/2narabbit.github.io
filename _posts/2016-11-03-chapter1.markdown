@@ -1,0 +1,60 @@
+---
+layout: default
+title:  "1장 - 오브젝트와 의존관계"
+date:   2016-11-03 00:00:00
+categories: main
+---
+
+# 초난감 DAO
+사용자 정보를 JDBC API를 통해 DB에 저장하고 조회할 수 있는 간단한 DAO를 하나 구현해보자
+
+## User
+	public class User {
+		String id;
+		String name;
+		String password;
+
+		public String getId() {
+			return id;
+		}
+
+		public String getName() {
+			return name;
+		}
+
+		public String getPassword() {
+			return password;
+		}
+
+		public void setId(String id) {
+			this.id = id;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+
+		public void setPassword(String password) {
+			this.password = password;
+		}
+	}
+
+사용자 정보를 저장하기위해 자바빈 규약을 따르는 오브젝트를 이용
+> 자바빈?
+> 다음 두가지 관례를 따라 만들어진 오브젝트를 의미하며 간단히 빈이라고 부르기도함
+> * 디폴트 생성자 
+>   - 자바빈은 파라미터가 없는 디폴트 생성자를 가져야함
+>   - 툴이나 프레임워크에서 리플렉션을 이용해 오브젝트를 생성하기 때문 ---> 리플렉션?
+> * 프로퍼티
+>    - 자바빈이 노출하는 이름을 가진 속성을 의미
+>    - 프로퍼티는 set으로 시작하는 수정자 메소드(setter)와 get으로 시작하는 접근자 메소드(getter)를 이용해 수정 또는 조회 가능
+
+## UserDao
+## main()을 이용한 DAO 테스트 코드
+# DAO의 분리
+# DAO의 확장
+# 제어의 역전(IoC)
+# 스프링의 IoC
+# 싱글톤 레지스트리와 오브젝트 스코프
+# 의존관계 주입(DI)
+# XML을 이용한 설정
