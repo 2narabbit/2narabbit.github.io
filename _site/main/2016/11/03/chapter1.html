@@ -83,6 +83,7 @@
 
 <h2 id="userdao">UserDao</h2>
 <p>사용자 정보를 DB에 넣고 관리할 수 있는 DAO 클래스를 만들어보자.</p>
+
 <div class="highlighter-rouge"><pre class="highlight"><code>public class UserDao {
 	public void add(User user) throws ClassNotFoundException, SQLException {
 		// DB 연결을 위한 Connection을 가져온다.
@@ -135,6 +136,7 @@
 
 <h2 id="main--dao--">main()을 이용한 DAO 테스트 코드</h2>
 <p>만들어진 코드의 기능을 검증하기 위해 테스트 코드를 작성하자.</p>
+
 <div class="highlighter-rouge"><pre class="highlight"><code>public static void main(String[] args) throws ClassNotFoundException, SQLException {
 	UserDao dao = new UserDao();
 
@@ -164,13 +166,110 @@
 <p><strong>모든 변경과 발전은 한 번에 한 가지 관심사항에 집중해서 일어나는데, 문제는 그에 따른 작업은 한 곳에 집중되지 않는 경우가 많다는 것이다.</strong>
 변화가 한 번에 한 가지 관심에 집중돼서 일어난다면, 한가지 관심이 한 군데에 집중되게 하자!</p>
 
+<h2 id="section">커넥션 만들기의 추출</h2>
+<p>UserDao의 구현된 메소드를 자세히 들여다보면 add() 메소드 하나에서만 적어도 세 가지 관심사항을 발견할 수 있다.</p>
+<ol>
+  <li>DB 연결을 위한 커넥션을 어떻게 가져올까</li>
+  <li>SQL 문장을 담을 statement를 만들고 실행</li>
+  <li>작업이 끝난 뒤 사용한 리소스 처리</li>
+</ol>
+
+<p>가장 먼저 커넥션을 가져오는 중복된 코드를 분리하자.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>public void add(User user) throws ClassNotFoundException, SQLException {
+	Connection c = getConnection();
+	....
+}
+
+public User get(String id) throws ClassNotFoundException, SQLException {
+	Connection c = getConnection();
+	....
+}
+
+private Connection getConnection() throws ClassNotFoundException, SQLException {
+	Class.forName("com.mysql.jdbc.Driver");
+	Connection c = DriverManager.getConnection("jdbc:mysql://localhost/test", "mysql", null);
+	return c;
+}
+</code></pre>
+</div>
+
+<p>추후 DB연결과 관련된 부분에 변경이 일어났을 경우, getConnection() 메소드 하나만 수정하면 된다. 관심의 종류에 따라 코드를 구분해놓았기 때문에 한 가지 관심에 대한 변경이 일어날 경우 그 관심이 집중되는 부분의 코드만 수정하면 된다.</p>
+
+<h2 id="section-1">커넥션 만들기의 독립</h2>
+<p>UserDao 소스코드를 제공하지 않고도 원하는 DB 커넥션 생성 방식을 적용해가면서 UserDao를 사용하게 할 수 있을까? ㅇㅇ UserDao 코드를 한 단계 더 분리하자.</p>
+
+<p>기존에는 같은 클래스에 다른 메소드로 분리했던 DB 커넥션 연결이라는 관심을 이번에는 <strong>상속을 통해 서브클래스로 분리</strong>해보자.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>public abstract class UserDao {
+    public void add(User user) throws ClassNotFoundException, SQLException {
+        Connection c = getConnection();
+		....
+    }
+
+    public User get(String id) throws ClassNotFoundException, SQLException {
+        Connection c = getConnection();
+		....
+    }
+
+    // 구현 코드는 제거되고 추상 메소드로 바뀌었다.
+    // 메소드의 구현은 서브클래스가 담당한다.
+    public abstract Connection getConnection() throws ClassNotFoundException, SQLException;
+}
+</code></pre>
+</div>
+
+<p>UserDao의 소스코드가 없어도 UserDao 클래스 상속을 통해 getConnection() 메소드를 원하는 방식으로 확장하여 UserDao의 기능을 사용할 수 있게 되었다.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>pulic class NUserDao extends UserDao {
+	// 상속을 통해 확장된 DB 커넥션 생성 메소드
+	public Connection getConnection() throws ClassNotFoundException, SQLException {
+		....
+	}
+}
+</code></pre>
+</div>
+
+<p>클래스 계층구조를 통해 두 개의 관심이 독립적으로 분리되면서 변경 작업은 한층 용이해졌다. 이제는 UserDao의 코드는 한 줄도 수정할 필요 없이 DB연결 기능을 새롭게 정의한 클래스를 만들 수 있다. 이제 UserDao는 단순히 변경이 용이하다는 수준을 넘어서 <strong>손쉽게 확장된다</strong>라고 말할 수 있게 되었다.</p>
+
+<p>이렇게 슈퍼클래스에 기본적인 로직의 흐름을 만들고, 그 기능의 일부를 추상 메소드나 오버라이딩이 가능한 protected 메소드 등으로 만든 뒤 서브클래스에서 이런 메소드를 필요에 맞게 구현해서 사용하도록 하는 방법을 <strong>템플릿 메소드 패턴</strong>이라고 한다.</p>
+
+<blockquote>
+  <p><strong>템플릿 메소드 패턴?</strong></p>
+
+  <p>상속을 통해 슈퍼클래스의 기능을 확장할 때 사용하는 가장 대표적인 방법.
+변하지 않는 기능은 슈퍼클래스에 만들어두고 자주 변경되며 확장할 기능은 서브클래스에서 만들도록함.</p>
+</blockquote>
+
+<p>그리고 UserDao의 서브클래스의 getConnection() 메소드는 어떤 Connection 클래스의 오브젝트를 어떻게 생성할 것인지를 결정하는 방법이라고도 볼 수 있다. 이렇게 서브클래스에서 구체적인 오브젝트 생성 방법을 결정하게 하는 것을 <strong>팩토리 메소드 패턴</strong>이라고 부르기도 한다.</p>
+
+<blockquote>
+  <p><strong>팩토리 메소드 패턴?</strong></p>
+
+  <p>템플릿 메소드 패턴과 마찬가지로 상속을 통해 기능을 확장하게 하는 패턴.</p>
+
+  <p>슈퍼클래스는 서브클래스에서 구현할 메소드를 호출해서 필요한 타입의 오브젝트를 가져와 사용하는 방식으로 구현. 이렇게 서브클래스에서 오브젝트 생성 방법과 클래스를 결정할 수 있도록 미리 정의해둔 메소드를 <strong>팩토리 메소드</strong>라고 하고, 이 방식을 통해 오브젝트 생성 방법을 슈퍼클래스의 기본 코드에서 독립시키는 방법을 팩토리 메소드 패턴이라고 한다.</p>
+
+  <p><strong>(주의)</strong></p>
+
+  <p>자바에서는 오브젝트를 생성하는 기능을 가진 메소드를 일반적으로 <strong>팩토리 메소드</strong>라고 부름. 이 때 말하는 팩토리 메소드와 팩토리 메소드 패턴의 팩토리 메소드는 의미가 다르므로 혼동하지 말아야함.</p>
+</blockquote>
+
+<p>이렇게 템플릿 메소드 패턴 또는 팩토리 메소드 패턴으로 관심사항이 다른 코드를 분리해내고, 서로 독립적으로 변경 또는 확장할 수 있도록 만드는 것은 간단하면서도 매우 효과적인 방법이다. 하지만 이 방법은 <strong>상속을 사용했다는 단점</strong>이 있다. 상속 자체는 간단하고 사용하기도 편리하지만 많은 한계점이 있다.</p>
+
+<ul>
+  <li>자바는 클래스의 다중상속을 허용하지 않는다. 단지 커넥션 객체를 가져오는 방법을 분리하기 위해 상속구조로 만들어버리면, 후에 다른 목적으로 UserDao에 상속을 적용하기 힘들다.</li>
+  <li>또 다른 문제는 상속을 통한 상하위 클래스의 관계는 생각보다 밀접하다는 점이다. 서브클래스는 슈퍼클래스의 기능을 직접 사용할 수 있다. 그래서 슈퍼클래스 내부의 변경이 있을 때 모든 서브클래스를 함께 수정하거나 다시 개발해야 할 수도 있다.</li>
+  <li>확장된 기능인 DB 커넥션을 생성하는 코드를 다른 DAO 클래스에 적용할 수 없다는 것도 큰 단점이다. 만약 UserDao외에 DAO 클래스들이 계속 만들어진다면 그때는 상속을 통해서 만들어진 getConnection()의 구현 코드가 매 DAO 클래스마다 중복돼서 나타나는 심각한 문제가 발생할 것이다.</li>
+</ul>
+
 <h1 id="dao--1">DAO의 확장</h1>
 
 <h1 id="ioc">제어의 역전(IoC)</h1>
 
 <h1 id="ioc-1">스프링의 IoC</h1>
 
-<h1 id="section">싱글톤 레지스트리와 오브젝트 스코프</h1>
+<h1 id="section-2">싱글톤 레지스트리와 오브젝트 스코프</h1>
 
 <h1 id="di">의존관계 주입(DI)</h1>
 
