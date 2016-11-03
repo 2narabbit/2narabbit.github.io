@@ -5,42 +5,49 @@ date:   2016-11-03 00:00:00
 categories: main
 ---
 
+스프링이 가장 관심을 많이 두는 대상은 **오브젝트**다. 스프링을 이해하려면 먼저 오브젝트에 깊은 관심을 가져야 한다.
+1장에서는 스프링이 어떤 것이고, 무엇을 제공하는지보다는 스프링이 관심을 갖는 대상인 오브젝트의 설계와 구현, 동작원리에 더 집중하자.
+
 # 초난감 DAO
-사용자 정보를 JDBC API를 통해 DB에 저장하고 조회할 수 있는 간단한 DAO를 하나 구현해보자
+사용자 정보를 JDBC API를 통해 DB에 저장하고 조회할 수 있는 간단한 DAO를 하나 구현해보자.
 
 ## User
-	public class User {
-		String id;
-		String name;
-		String password;
+사용자 정보를 저장하기위해 자바빈 규약을 따르는 클래스를 선언하자.
 
-		public String getId() {
-			return id;
-		}
+```
+public class User {
+	String id;
+	String name;
+	String password;
 
-		public String getName() {
-			return name;
-		}
-
-		public String getPassword() {
-			return password;
-		}
-
-		public void setId(String id) {
-			this.id = id;
-		}
-
-		public void setName(String name) {
-			this.name = name;
-		}
-
-		public void setPassword(String password) {
-			this.password = password;
-		}
+	public String getId() {
+		return id;
 	}
 
-사용자 정보를 저장하기위해 자바빈 규약을 따르는 오브젝트를 이용
-> 자바빈?
+	public String getName() {
+		return name;
+	}
+
+	public String getPassword() {
+		return password;
+	}
+
+	public void setId(String id) {
+		this.id = id;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public void setPassword(String password) {
+		this.password = password;
+	}
+}
+```
+
+> **자바빈?**
+>
 > 다음 두가지 관례를 따라 만들어진 오브젝트를 의미하며 간단히 빈이라고 부르기도함
 > * 디폴트 생성자 
 >   - 자바빈은 파라미터가 없는 디폴트 생성자를 가져야함
@@ -50,11 +57,96 @@ categories: main
 >    - 프로퍼티는 set으로 시작하는 수정자 메소드(setter)와 get으로 시작하는 접근자 메소드(getter)를 이용해 수정 또는 조회 가능
 
 ## UserDao
+사용자 정보를 DB에 넣고 관리할 수 있는 DAO 클래스를 만들어보자.
+```
+public class UserDao {
+	public void add(User user) throws ClassNotFoundException, SQLException {
+		// DB 연결을 위한 Connection을 가져온다.
+		Class.forName("com.mysql.jdbc.Driver");
+		Connection c = DriverManager.getConnection("jdbc:mysql://localhost/test", "mysql", null);
+
+		// SQL을 담은 statement를 만든다.
+		PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?,?,?)");
+		ps.setString(1, user.getId());
+		ps.setString(2, user.getName());
+		ps.setString(3, user.getPassword());
+
+		// statement를 실행한다.
+		ps.executeUpdate();
+
+		// 작업을 마친 뒤 리소스를 정리한다.
+		ps.close();
+		c.close();
+	}
+
+	public User get(String id) throws ClassNotFoundException, SQLException {
+		// DB 연결을 위한 Connection을 가져온다.
+		Class.forName("com.mysql.jdbc.Driver");
+		Connection c = DriverManager.getConnection("jdbc:mysql://localhost/test", "mysql", null);
+
+		// SQL을 담은 statement를 만든다.
+		PreparedStatement ps = c.prepareStatement("select * from users where id=?");
+		ps.setString(1, id);
+
+		// statement를 실행한다.
+		ResultSet rs = ps.executeQuery();
+		rs.next();
+
+		// 쿼리 실행 결과를 받아서 오브젝트에 옮겨준다.
+		User user = new User();
+		user.setId(rs.getString("id"));
+		user.setName(rs.getString("name"));
+		user.setPassword(rs.getString("password"));
+
+		// 작업을 마친 뒤 리소스를 정리한다.
+		rs.close();
+		ps.close();
+		c.close();
+
+		return user;
+	}
+}
+```
+
 ## main()을 이용한 DAO 테스트 코드
+만들어진 코드의 기능을 검증하기 위해 테스트 코드를 작성하자.
+```
+public static void main(String[] args) throws ClassNotFoundException, SQLException {
+	UserDao dao = new UserDao();
+
+	User user = new User();
+	user.setId("ellie");
+	user.setName("스프링");
+	user.setPassword("12345678");
+
+	dao.add(user);
+	System.out.println(user.getId() + " 등록 성공");
+
+	User user2 = dao.get(user.getId());
+	System.out.println(user2.getName());
+	System.out.println(user2.getPassword());
+
+	System.out.println(user2.getId() + " 조회 성공");
+}
+```
+
+이렇게 해서 사용자 정보의 등록과 조회가 되는 초간단 DAO를 구현하였으나 이 코드는 여러가지 문제를 가진 **초난감 DAO** 코드임!
+
 # DAO의 분리
+오브젝트에 대한 설계와 이를 구현한 코드는 계속 변한다. 소프트웨어 개발에서 끝이란 개념은 없다ㅠㅠ
+그래서 개발자는 미래의 변화를 어떻게 대비할 것인가를 염두하여 객체를 설계하여야 한다. 가장 좋은 대책은 **변화의 폭을 최소한으로 줄여주는 것**이다. 어떻게 변경이 일어날 때 필요한 작업은 최소화하고, 그 변경이 다른 곳에 문제를 일으키지 않게 할 수 있을까?
+
+**모든 변경과 발전은 한 번에 한 가지 관심사항에 집중해서 일어나는데, 문제는 그에 따른 작업은 한 곳에 집중되지 않는 경우가 많다는 것이다.**
+변화가 한 번에 한 가지 관심에 집중돼서 일어난다면, 한가지 관심이 한 군데에 집중되게 하자!
+
 # DAO의 확장
+
 # 제어의 역전(IoC)
+
 # 스프링의 IoC
+
 # 싱글톤 레지스트리와 오브젝트 스코프
+
 # 의존관계 주입(DI)
+
 # XML을 이용한 설정

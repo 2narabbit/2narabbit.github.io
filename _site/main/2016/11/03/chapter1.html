@@ -20,10 +20,15 @@
 
     <section class="main-content">
       
-      <h1 id="dao">초난감 DAO</h1>
-<p>사용자 정보를 JDBC API를 통해 DB에 저장하고 조회할 수 있는 간단한 DAO를 하나 구현해보자</p>
+      <p>스프링이 가장 관심을 많이 두는 대상은 <strong>오브젝트</strong>다. 스프링을 이해하려면 먼저 오브젝트에 깊은 관심을 가져야 한다.
+1장에서는 스프링이 어떤 것이고, 무엇을 제공하는지보다는 스프링이 관심을 갖는 대상인 오브젝트의 설계와 구현, 동작원리에 더 집중하자.</p>
+
+<h1 id="dao">초난감 DAO</h1>
+<p>사용자 정보를 JDBC API를 통해 DB에 저장하고 조회할 수 있는 간단한 DAO를 하나 구현해보자.</p>
 
 <h2 id="user">User</h2>
+<p>사용자 정보를 저장하기위해 자바빈 규약을 따르는 클래스를 선언하자.</p>
+
 <div class="highlighter-rouge"><pre class="highlight"><code>public class User {
 	String id;
 	String name;
@@ -56,10 +61,10 @@
 </code></pre>
 </div>
 
-<p>사용자 정보를 저장하기위해 자바빈 규약을 따르는 오브젝트를 이용</p>
 <blockquote>
-  <p>자바빈?
-다음 두가지 관례를 따라 만들어진 오브젝트를 의미하며 간단히 빈이라고 부르기도함</p>
+  <p><strong>자바빈?</strong></p>
+
+  <p>다음 두가지 관례를 따라 만들어진 오브젝트를 의미하며 간단히 빈이라고 부르기도함</p>
   <ul>
     <li>디폴트 생성자
       <ul>
@@ -77,13 +82,98 @@
 </blockquote>
 
 <h2 id="userdao">UserDao</h2>
+<p>사용자 정보를 DB에 넣고 관리할 수 있는 DAO 클래스를 만들어보자.</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public class UserDao {
+	public void add(User user) throws ClassNotFoundException, SQLException {
+		// DB 연결을 위한 Connection을 가져온다.
+		Class.forName("com.mysql.jdbc.Driver");
+		Connection c = DriverManager.getConnection("jdbc:mysql://localhost/test", "mysql", null);
+
+		// SQL을 담은 statement를 만든다.
+		PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?,?,?)");
+		ps.setString(1, user.getId());
+		ps.setString(2, user.getName());
+		ps.setString(3, user.getPassword());
+
+		// statement를 실행한다.
+		ps.executeUpdate();
+
+		// 작업을 마친 뒤 리소스를 정리한다.
+		ps.close();
+		c.close();
+	}
+
+	public User get(String id) throws ClassNotFoundException, SQLException {
+		// DB 연결을 위한 Connection을 가져온다.
+		Class.forName("com.mysql.jdbc.Driver");
+		Connection c = DriverManager.getConnection("jdbc:mysql://localhost/test", "mysql", null);
+
+		// SQL을 담은 statement를 만든다.
+		PreparedStatement ps = c.prepareStatement("select * from users where id=?");
+		ps.setString(1, id);
+
+		// statement를 실행한다.
+		ResultSet rs = ps.executeQuery();
+		rs.next();
+
+		// 쿼리 실행 결과를 받아서 오브젝트에 옮겨준다.
+		User user = new User();
+		user.setId(rs.getString("id"));
+		user.setName(rs.getString("name"));
+		user.setPassword(rs.getString("password"));
+
+		// 작업을 마친 뒤 리소스를 정리한다.
+		rs.close();
+		ps.close();
+		c.close();
+
+		return user;
+	}
+}
+</code></pre>
+</div>
+
 <h2 id="main--dao--">main()을 이용한 DAO 테스트 코드</h2>
+<p>만들어진 코드의 기능을 검증하기 위해 테스트 코드를 작성하자.</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public static void main(String[] args) throws ClassNotFoundException, SQLException {
+	UserDao dao = new UserDao();
+
+	User user = new User();
+	user.setId("ellie");
+	user.setName("스프링");
+	user.setPassword("12345678");
+
+	dao.add(user);
+	System.out.println(user.getId() + " 등록 성공");
+
+	User user2 = dao.get(user.getId());
+	System.out.println(user2.getName());
+	System.out.println(user2.getPassword());
+
+	System.out.println(user2.getId() + " 조회 성공");
+}
+</code></pre>
+</div>
+
+<p>이렇게 해서 사용자 정보의 등록과 조회가 되는 초간단 DAO를 구현하였으나 이 코드는 여러가지 문제를 가진 <strong>초난감 DAO</strong> 코드임!</p>
+
 <h1 id="dao-">DAO의 분리</h1>
+<p>오브젝트에 대한 설계와 이를 구현한 코드는 계속 변한다. 소프트웨어 개발에서 끝이란 개념은 없다ㅠㅠ
+그래서 개발자는 미래의 변화를 어떻게 대비할 것인가를 염두하여 객체를 설계하여야 한다. 가장 좋은 대책은 <strong>변화의 폭을 최소한으로 줄여주는 것</strong>이다. 어떻게 변경이 일어날 때 필요한 작업은 최소화하고, 그 변경이 다른 곳에 문제를 일으키지 않게 할 수 있을까?</p>
+
+<p><strong>모든 변경과 발전은 한 번에 한 가지 관심사항에 집중해서 일어나는데, 문제는 그에 따른 작업은 한 곳에 집중되지 않는 경우가 많다는 것이다.</strong>
+변화가 한 번에 한 가지 관심에 집중돼서 일어난다면, 한가지 관심이 한 군데에 집중되게 하자!</p>
+
 <h1 id="dao--1">DAO의 확장</h1>
+
 <h1 id="ioc">제어의 역전(IoC)</h1>
+
 <h1 id="ioc-1">스프링의 IoC</h1>
+
 <h1 id="section">싱글톤 레지스트리와 오브젝트 스코프</h1>
+
 <h1 id="di">의존관계 주입(DI)</h1>
+
 <h1 id="xml--">XML을 이용한 설정</h1>
 
 
