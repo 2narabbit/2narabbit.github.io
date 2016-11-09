@@ -736,13 +736,179 @@ public class UserDaoTest {
 
 <p>의존관계 검색은 기존 의존관계 주입의 거의 모든 장점을 가지고 있다. 단, 방법만 조금 다를 뿐이다.</p>
 
-<p>그렇다면 의존관계 검색과 의존관계 주입 중 어떤 것이 더 나을까? 코드를 보면 느낄 수 있겠지만 의존관계 주입 쪽이 훨씬 단순하고 깔끔하다. 그런데 의존관계 검색을 사용해야 할 때가 있다. 앞에서 만들었던 테스트 코드인 UserDaoTest를 보자. 테스트 코드에서는 이미 의존관계 검색 방식인 getBean()을 사용했다. 스태틱 메소드인 main()에서는 DI를 이용해 오브젝트를 주입받을 방법이 없기 때문이다.</p>
+<p>그렇다면 의존관계 검색과 의존관계 주입 중 어떤 것이 더 나을까? 코드를 보면 느낄 수 있겠지만 의존관계 주입 쪽이 훨씬 단순하고 깔끔하다. 그런데 의존관계 검색을 사용해야 할 때가 있다.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>public class UserDaoTest {
+	public static void main(String[] args) throws ClassNotFoundException, SQLException {
+		ApplicationContext context = new AnnotationConfigApplicationContext(DaoFactory.class);
+		UserDao dao = context.getBean("userDao", UserDao.class);
+	}
+}
+</code></pre>
+</div>
+
+<p>앞에서 만들었던 테스트 코드에서는 이미 의존관계 검색 방식인 getBean()을 사용했다. 스태틱 메소드인 main()에서는 DI를 이용해 오브젝트를 주입받을 방법이 없기 때문이다.</p>
 
 <p>의존관계 검색과 의존관계 주입을 적용할 때 발견할 수 있는 중요한 차이점이 하나 있다. 의존관계 검색 방식에서는 검색하는 오브젝트는 자신이 스프링의 빈일 필요가 없다는 점이다. UserDao에 스프링의 getBean()을 사용한 의존관계 검색 방법을 적용했다고 해보자. 이 경우 UserDao는 굳이 스프링이 만들고 관리하는 빈일 필요가 없다. 그냥 어딘가에서 직접 new UserDao() 해서 만들어서 사용해도 된다. 이 때는 ConnectionMaker만 스프링의 빈이기만 하면 된다.</p>
 
 <p>반면에 의존관계 주입에서는 UserDao와 ConnectionMaker 사이에 DI가 적용되려면 UserDao도 반드시 컨테이너가 만드는 빈 오브젝트여야 한다. 컨테이너가 UserDao에 ConnectionMaker 오브젝트를 주입해주려면 UserDao에 대한 생성과 초기화 권한을 갖고 있어야 하고, 그러려면 UserDao는 IoC 방식으로 컨테이너에서 생성되는 오브젝트, 즉 빈이어야 하기 때문이다. 이런 점에서 DI와 DL(의존관계 검색)은 적용 방법에 차이가 있다.</p>
 
 <p>DI를 원하는 오브젝트는 먼저 자기 자신이 컨테이너가 관리하는 빈이 돼야 한다는 사실을 잊지 말자.</p>
+
+<blockquote>
+  <p>DI의 동작방식은 이름 그대로 외부로부터의 주입이다. 하지만 단지 외부에서 파라미터로 오브젝트를 넘겨줬다고 해서 다 DI가 아니라는 점을 주의해야 한다. 주입받는 메소드 파라미터가 이미 특정 클래스 타입으로 고정되어 있다면 DI가 일어날 수 없다. DI에서 말하는 주입은 다이나믹하게 구현 클래스를 결정해서 제공받을 수 있도록 인터페이스 타입의 파라미터를 통해 이뤄져야 한다.</p>
+</blockquote>
+
+<h2 id="section-29">의존관계 주입의 응용</h2>
+<p>스프링이 제공하는 기능의 99%가 DI의 혜택을 이용하고 있다. DI 없이는 스프링도 없다. 그만큼 DI를 활용할 방법은 다양하다.</p>
+
+<h3 id="section-30">기능 구현의 교환</h3>
+<p>개발 중에는 로컬 DB를 사용하고, 배포시에 리얼 DB를 사용하도록 하는 어플리케이션 개발을 생각해보자.</p>
+
+<p>DI 방식을 적용하지 않았을 경우, 로컬 DB에 대한 연결 기능이 있는 클래스를 만들고, 모든 DAO에서 이 클래스의 오브젝트를 매번 생성해서 사용하게 했을 것이다(마치 초난감 DAO처럼..). 배포를 위해 DB 연결 클래스를 변경하게 되면 모든 DAO에서 클래스 정보를 변경해주어야 하는 수고가 발생한다.</p>
+
+<p>반면에 DI 방식을 적용해서 만들었다고 해보자. 모든 DAO는 생성시점에 ConnectionMaker 타입의 오브젝트를 컨테이너로부터 제공받는다. 구체적인 사용 클래스 이름은 컨테이너가 사용할 설정정보에 들어 있다. 개발자 PC에서는 DaoFactory의 코드를 다음과 같이 만들어서 사용하면 된다.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>@Bean
+public ConnectionMaker connectionMaker() {
+	return new LocalDBConnectionMaker();
+}
+</code></pre>
+</div>
+
+<p>이를 서버에 배포할 때는 어떤 DAO 클래스와 코드도 수정할 필요가 없다. 단지 아래와 같이 딱 한줄만 수정하면 된다.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>@Bean
+public ConnectionMaker connectionMaker() {
+	return new ProductionDBConnectionMaker();
+}
+</code></pre>
+</div>
+
+<h3 id="section-31">부가기능 추가</h3>
+<p>DAO가 DB를 얼마나 많이 연결해서 사용하는지 파악하고 싶다고 해보자.</p>
+
+<p>무식한 방법으로 모든 DAO의 makeConnection() 메소드를 호출하는 부분에 새로 추가한 카운터를 증가시키는 코드를 넣어야 할까? 이것은 엄청난 낭비다. 게다가 DAO 코드를 수정하는건 지금까지 그렇게 피하려고 했던 일이 아닌가. 또한 DB 연결횟수를 세는 일은 DAO의 관심사항이 아니다. 어떻게든 분리돼야 할 책임이기도 하다.</p>
+
+<p>DI 컨테이너에서라면 아주 간단한 방법으로 가능하다. DAO와 DB 커넥션을 만드는 오브젝트 사이에 연결횟수를 카운팅하는 오브젝트를 하나 더 추가하는 것이다. DI를 이용한다고 했으니 <strong>당연히 기존 코드는 수정하지 않아도 된다</strong>. 단지 컨테이너가 사용하는 설정정보만 수정해서 런타임 의존관계만 새롭게 정의해주면 된다.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>// DAO가 의존할 대상이 될 것이기 때문에 ConnectionMaker 인터페이스를 구현해서 만든다.
+public class CountingConnectionMaker implements ConnectionMaker {
+	int counter = 0;
+	private ConnectionMaker realConnectionMaker;
+
+	public CountingConnectionMaker(ConnectionMaker realConnectionMaker) {
+		this.realConnectionMaker = realConnectionMaker;
+	}
+
+	public Connection makeConnection() throws ClassNotFoundException, SQLException {
+		// 직접 DB 커넥션을 만들지 않는다.
+		// 자신의 관심사인 DB 연결횟수 카운팅 작업을 마치면 실제 DB 커넥션을 만들어주는 오브젝트의 메소드를 호출한다.
+		this.counter++;
+		return realConnectionMaker.makeConnection();
+	}
+
+	public int getCounter() {
+		return this.counter;
+	}
+}
+</code></pre>
+</div>
+
+<p>UserDao는 ConnectionMaker의 인터페이스에만 의존하고 있기 때문에, ConnectionMaker 인터페이스를 구현하고 있다면 어떤 것이든 DI가 가능하다. 그래서 UserDao 오브젝트가 DI 받는 대상의 설정을 조정해서 DConnection 오브젝트 대신 CountingConnectionMaker 오브젝트로 바꿔치기하는 것이다. 그렇다고 해서 DB 커넥션을 제공해주지 않으면 DAO가 동작하지 않을 테니 CountingConnectionMaker가 다시 실제 사용할 DB 커넥션을 제공해주는 DConnectionMaker를 호출하도록 만들어야 한다. 역시 DI를 사용하면 된다.</p>
+
+<p>CountingConnectionMaker가 추가되면서 런타임 의존관계가 어떻게 바뀌는지 살펴보자.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>// CountingConnectionMaker를 사용하기 전의 런타임 의존관계
+------------          ---------------------
+|          |          |                   |
+| :UserDao |---------&gt;| :DConnectionMaker |
+|          |          |                   |
+------------          ---------------------
+
+// 재구성된 새로운 런타임 의존관계
+------------         ----------------------------          ---------------------
+|          |         |                          |          |                   |
+| :UserDao |--------&gt;| :CountingConnectionMaker |---------&gt;| :DConnectionMaker |
+|          |         |                          |          |                   |
+------------         ----------------------------          ---------------------
+</code></pre>
+</div>
+
+<p>새로운 의존관계를 컨테이너가 사용할 설정정보를 이용해 만들어보자.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>@Configuration
+public class CountingDaoFactory {
+	@Bean
+	public UserDao userDao() {
+		// 모든 DAO는 여전히 connectionMaker()에서 만들어지는 오브젝트를 DI 받는다.
+		return new UserDao(connectionMaker());
+	}
+
+	@Bean
+	public ConnectionMaker connectionMaker() {
+		return new CountingConnectionMaker(realConnectionMaker());
+	}
+
+	@Bean
+	public ConnectionMaker realConnectionMaker() {
+		return new DConnectionMaker();
+	}
+}
+</code></pre>
+</div>
+
+<p>지금은 DAO가 하나뿐이지만 DAO가 수십, 수백 개여도 상관없다. DI의 장점은 관심사의 분리를 통해 얻어지는 높은 응집도에서 나온다. 모든 DAO가 직접 의존해서 사용할 ConnectionMaker 타입 오브젝트는 connectionMaker() 메소드에서 만든다. 따라서 CountingConnectionMaker의 의존관계를 추가하려면 이 메소드만 수정하면 그만이다. 또한 CountingConnectionMaker를 이용한 분석 작업이 모두 끝나면, 다시 CountingDaoFactory 설정 클래스를 DaoFactory로 변경하거나 connectionMaker() 메소드를 수정하는 것만으로 DAO의 런타임 의존관계는 이전 상태로 복구된다.</p>
+
+<p>바로 이런 것이 의존관계 주입의 매력을 잘 드러내는 응용 방법이다.</p>
+
+<h2 id="section-32">메소드를 이용한 의존관계 주입</h2>
+<p>지금까지는 UserDao의 의존관계 주입을 위해 생성자를 사용했다. 그런데 의존관계 주입 시 반드시 생성자를 사용해야 하는 것은 아니다. 생성자가 아닌 일반 메소드를 사용할 수도 있을 뿐만 아니라, 생성자를 사용하는 방법보다 더 자주 사용된다.</p>
+
+<ul>
+  <li>
+    <p>수정자 메소드(setter)를 이용한 주입
+** 수정자 메소드는 외부에서 오브젝트 내부의 애트리뷰트 값을 변경하려는 용도로 주로 사용된다.
+** 수정자 메소드의 핵심기능은 파라미터로 전달된 값을 보통 내부의 인스턴스 변수에 저장하는 것이다.
+** 수정자 메소드는 외부로부터 제공받은 오브젝트 레퍼런스를 저장해뒀다가 내부의 메소드에서 사용하게 하는 DI 방식에서 활용하기에 적당하다.</p>
+  </li>
+  <li>
+    <p>일반 메소드를 이용한 주입
+** 수정자 메소드처럼 한 번에 한 개의 파라미터만 가질 수 있다는 제약이 싫다면 여러 개의 파라미터를 갖는 일반 메소드를 DI용으로 사용할 수도 있다.
+** 하지만 파라미터의 개수가 많아지고 비슷한 타입이 여러 개라면 실수하기 쉽다.</p>
+  </li>
+</ul>
+
+<p>스프링은 전통적으로 메소드를 이용한 DI 방법 중에서 수정자 메소드를 가장 많이 사용해왔다. 뒤에서 보겠지만, DaoFactory 같은 자바 코드 대신 XML을 사용하는 경우에는 자바빈 규약을 따르는 수정자 메소드가 가장 사용하기 편리하다.</p>
+
+<p>UserDao도 수정자 메소드를 이용해 DI 하도록 만들어보자.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>public class UserDao() {
+	private ConnectionMaker connectionMaker;
+
+	public void setConnectionMaker(ConnectionMaker connectionMaker) {
+		this.connectionMaker = connectionMaker;
+	}
+}
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>@Configuration
+public class DaoFactory {
+	@Bean
+	public UserDao userDao() {
+		UserDao userDao = new UserDao();
+		userDao.setConnectionMaker(connectionMaker());
+		return userDao;
+	}
+
+	@Bean
+	public ConnectionMaker connectionMaker() {
+		return new DConnectionMaker();
+	}
+}
+</code></pre>
+</div>
 
 <h1 id="xml--">XML을 이용한 설정</h1>
 
