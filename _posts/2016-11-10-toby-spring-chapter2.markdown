@@ -515,6 +515,9 @@ public class UserDaoTest {
 		....
 		// 테스트에서 UserDao가 사용할 DataSource 오브젝트를 직접 생성한다.
 		DataSource dataSource = new SingleConnectionDataSource("jdbc:mysql://localhost/testdb", "spring", "book", true);
+
+		// 코드에 의한 수동 DI
+		dao.setDataSource(dataSource);
 	}
 }
 ```
