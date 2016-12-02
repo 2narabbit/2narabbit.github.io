@@ -331,3 +331,172 @@ public void deleteAll() throws SQLException {
 > 의존관계 주입은 다양한 형태로 적용할 수 있다. DI의 가장 중요한 개념은 제 3자의 도움을 통해 두 오브젝트 사이의 유연한 관계가 설정되도록 만든다는 것이다. 이 개념만 따른다면 DI를 이루는 오브젝트와 구성요소의 구조나 관계는 다양하게 만들 수 있다.
 >
 > 일반적으로 DI는 의존관계에 있는 두 개의 오브젝트와 이 관계를 다이나믹하게 설정해주는 오브젝트 팩토리(DI 컨테이너), 그리고 이를 사용하는 클라이언트라는 4개의 오브젝트 사이에서 일어난다. 하지만 때로는 원시적인 전략 패턴 구조를 따라 클라이언트가 오브젝트 팩토리의 책임을 함께 지고 있을 수도 있다. 또는 클라이언트와 전략(의존 오브젝트)이 결합될 수도 있다. 심지어는 클라이언트와 DI 관계에 있는 두 개의 오브젝트가 모두 하나의 클래스 안에 담길 수도 있다.
+
+# JDBC 전략 패턴의 최적화
+
+## 전략 클래스의 추가 정보
+이번엔 add() 메소드에도 적용해보자.
+
+```
+public class AddStatement implements StatementStrategy {
+	public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+		PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?, ?, ?)");
+
+		// 그런데 user는 어디서 가져올까??
+		ps.setString(1, user.getId());
+		ps.setString(1, user.getName());
+		ps.setString(1, user.getPassword());
+
+		return ps;
+	}
+}
+```
+
+이렇게 클래스를 분리하고 나니 컴파일 에러가 난다. deleteAll()과는 달리 add()에서는 PreparedStatement를 만들 때 user라는 부가정보가 필요하기 때문이다.
+
+클라이언트로부터 User 타입 오브젝트를 받을 수 있도록 AddStatement의 생성자를 통해 제공받게 만들자.
+
+```
+public class AddStatement implements StatementStrategy {
+	User user;
+
+	public AddStatement(User user) {
+		this.user = user;
+	}
+
+	public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+		....
+		ps.setString(1, user.getId());
+		ps.setString(1, user.getName());
+		ps.setString(1, user.getPassword());
+		....
+	}
+}
+```
+
+이제 컴파일 에러는 나지 않을 것이다. 다음은 클라이언트인 UserDao의 add() 메소드에 user 정보를 생성자를 통해 전달해주도록 수정한다.
+
+```
+public void add(User user) throws SQLException{
+	StatementStrategy st = new AddStatement(user);
+	jdbcContextWithStatementStrategy(st);
+}
+```
+
+이렇게 해서 deleteAll()과 add() 두 군데에서 모두 PreparedStatement를 실행하는 JDBC try/catch/finally 컨텍스트를 공유해서 사용할 수 있게 됐다. 앞으로 비슷한 기능의 DAO 메소드가 필요할 때마다 try/catch/finally 로 범벅된 코드를 만들 필요가 없어졌다.
+
+## 전략과 클라이언트의 동거
+현재 만들어진 구조에는 2가지 불만이 있다.
+
+1. DAO 메소드마다 새로운 StatementStrategy 구현 클래스를 만들어야 한다는 점이다. 이렇게 되면 기존 UserDao 때보다 클래스 파일의 개수가 많이 늘어난다. 이래서는 템플릿 메소드 패턴을 적용했을 때 보다 그다지 나을 게 없다.
+2. DAO 메소드에서 StatementStrategy에 전달할 User와 같은 부가적인 정보가 있는 경우, 이를 위해 오브젝트를 전달받는 생성자와 이를 저장해둘 인스턴스 변수를 번거롭게 만들어야 한다는 점이다. 
+
+이 두 가지 문제를 해결할 수 있는 방법을 생각해보자.
+
+### 로컬 클래스
+클래스 파일이 많아지는 문제는 간단한 해결 방법이 있다. StatementStrategy 전략 클래스를 매번 독립된 파일로 만들지 말고 UserDao 클래스 안에 내부 클래스로 정의해버리는 것이다. DeleteAllStatement나 AddStatement는 UserDao 밖에서는 사용되지 않는다. 특정 메소드에서만 사용되는 것이라면 **로컬 클래스**로 만들 수 있다.
+
+```
+public void add(User user) throws SQLException{
+	// add() 메소드 내부에 로컬 클래스를 선언한다.
+	class AddStatement implements StatementStrategy {
+		User user;
+
+		public AddStatement(User user) {
+			this.user = user;
+		}
+
+		public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+			....
+			ps.setString(1, user.getId());
+			ps.setString(1, user.getName());
+			ps.setString(1, user.getPassword());
+			....
+		}
+	}
+
+	StatementStrategy st = new AddStatement(user);
+	jdbcContextWithStatementStrategy(st);
+}
+```
+
+로컬 클래스는 선언된 메소드 내에서만 사용할 수 있다. AddStatement가 사용될 곳이 add() 메소드뿐이라면, 이렇게 사용하기 전에 바로 정의해서 쓰는 것도 나쁘지 않다. 덕분에 클래스 파일이 하나 줄었고, add() 메소드 안에서 PreparedStatement 생성 로직을 함께 볼 수 있으니 코드를 이해하기도 좋다.
+
+로컬 클래스에는 또 한 가지 장점이 있다. 바로 로컬 클래스는 클래스가 내부 클래스이기 때문에 자신이 선언된 곳의 정보에 접근할 수 있다는 점이다. AddStatement는 User 정보를 필요로 한다. 이를 위해 생성자를 만들어서 add() 메소드에서 이를 전달해주도록 했다. 그런데 이렇게 add() 메소드 내에 AddStatement 클래스를 정의하면 번거롭게 생성자를 통해 User 오브젝트를 전달해줄 필요가 없다.
+
+내부 메소드는 자신이 정의된 메소드의 로컬 변수에 직접 접근할 수 있기 때문이다. 다만, 내부 클래스에서 외부의 변수를 사용할 때는 외부 변수는 반드시 final로 선언해줘야 한다. 
+
+이렇게 내부 클래스의 장점을 이용하면 User 정보를 전달받기 위해 만들었던 생성자와 인스턴스 변수를 제거할 수 있다.
+
+```
+public void add(final User user) throws SQLException{
+	class AddStatement implements StatementStrategy {
+		public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+			....
+			// 로컬(내부) 클래스의 코드에서 외부의 메소드 로컬 변수에 직접 접근할 수 있다.
+			ps.setString(1, user.getId());
+			ps.setString(1, user.getName());
+			ps.setString(1, user.getPassword());
+			....
+		}
+	}
+
+	// 생성자 파라미터로 User를 전달하지 않아도 된다.
+	StatementStrategy st = new AddStatement();
+	jdbcContextWithStatementStrategy(st);
+}
+```
+
+로컬 클래스로 만들어두니 장점이 많다. 메소드마다 추가해야 했던 클래스 파일을 하나 줄일 수 있다는 것도 장점이고, 내부 클래스의 특징을 이용해 로컬 변수를 바로 가져다 사용할 수 있다는 것도 큰 장점이다.
+
+> 중첩 클래스의 종류
+>
+> 다른 클래스 내부에 정의되는 클래스를 중첩 클래스라고 한다. 중첩 클래스는 독립적으로 오브젝트로 만들어질 수 있는 **스태틱 클래스**와 자신이 정의된 클래스의 오브젝트 안에서만 만들어질 수 있는 **내부 클래스**로 구분된다.
+>
+> 내부 클래스는 다시 범위에 따라 세 가지로 구분된다. 멤버 필드처럼 오브젝트 레벨에 정의되는 **멤버 내부 클래스**와 메소드 레벨에 정의되는 **로컬 클래스**, 그리고 이름을 갖지 않는 **익명 내부 클래스**다. 익명 내부 클래스의 범위는 선언된 위치에 따라서 다르다.
+
+### 익명 내부 클래스
+한 가지 더 욕심을 내보자. AddStatement 클래스는 add() 메소드에서만 사용할 용도로 만들어졌다. 그렇다면 좀 더 간결하게 클래스 이름도 제거할 수 있다.
+
+> 익명 내부 클래스
+>
+> 익명 내부 클래스는 이름을 갖지 않는 클래스다. 클래스 선언과 오브젝트 생성이 결합된 형태로 만들어지며, 상속할 클래스나 구현할 인터페이스를 생성자 대신 사용해서 다음과 같은 형태로 만들어 사용한다.
+>
+> new 인터페이스이름() { 클래스 본문 };
+>
+> 클래스를 재사용할 필요가 없고, 구현한 인터페이스 타입으로만 사용할 경우에 유용하다.
+
+AddStatement를 익명 내부 클래스로 만들어보자. 이름이 없기 때문에 클래스 자신의 타입을 가질 수 없고, 구현한 인터페이스 타입의 변수에만 저장할 수 있다.
+
+```
+StatementStrategy st = new StatementStrategy() {
+	public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+		PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?, ?, ?)");
+
+		ps.setString(1, user.getId());
+		ps.setString(1, user.getName());
+		ps.setString(1, user.getPassword());
+
+		return ps;
+	}
+}
+```
+
+만들어진 익명 내부 클래스의 오브젝트는 딱 한 번만 사용할 테니 굳이 변수에 담아두지 말고 jdbcContextWithStatementStrategy() 메소드의 파라미터에서 바로 생성하는 편이 낫다.
+
+```
+public void add(final User user) throws SQLException {
+	jdbcContextWithStatementStrategy(
+		new StatementStrategy() {
+			public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+				PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?, ?, ?)");
+
+				ps.setString(1, user.getId());
+				ps.setString(1, user.getName());
+				ps.setString(1, user.getPassword());
+
+				return ps;
+			}
+	);
+}
+```
