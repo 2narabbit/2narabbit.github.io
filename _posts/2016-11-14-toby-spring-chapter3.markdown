@@ -661,12 +661,100 @@ setDataSource() 메소드는 DI 컨테이너가 DataSource 오브젝트를 주�
 
 지금까지 JdbcContext와 같이 인터페이스를 사용하지 않고 DAO와 밀접한 관계를 갖는 클래스를 DI에 적용하는 방법 두 가지를 알아봤다. 두 가지 방법 모두 장단점이 있다.
 
-*스프링의 DI를 이용한 방법*
+**스프링의 DI를 이용한 방법**
 * 장점 : 오브젝트 사이의 실제 의존관계가 설정파일에 명확하게 드러남
 * 단점 : DI의 근본적인 원칙에 부합하지 않는 구체적인 클래스와의 관계가 설정에 직접 노출됨
 
-*코드를 이용해 수동으로 DI를 하는 방법*
+**코드를 이용해 수동으로 DI를 하는 방법**
 * 장점 : JdbcContext가 UserDao의 내부에서 만들어지고 사용되면서 그 관계를 외부에는 드러내지 않음. 필요에 따라 내부에서 은밀히 DI를 수행하고 그 전략을 외부에는 감출 수 있음
 * 단점 : JdbcContext를 여러 오브젝트가 사용하더라도 싱글톤으로 만들 수 없고, DI 작업을 위한 부가적인 코드가 필요함
 
 일반적으로 어떤 방법이 더 낫다고 말할 수는 없다. 상황에 따라 적절하다고 판단되는 방법을 선택해서 사용하면 된다. 다만 왜 그렇게 선택했는지에 대한 분명한 이유와 근거는 있어야 한다. *분명하게 설명할 자신이 없다면 차라리 인터페이스를 만들어서 평범한 DI 구조로 만드는 게 나을 수도 있다.*
+
+# 템플릿과 콜백
+지금까지 UserDao와 StatementStrategy, JdbcContext를 이용해 만든 코드는 일종의 전략 패턴이 적용된 것이라고 볼 수 있다. 복잡하지만 바뀌지 않는 일정한 패턴을 갖는 작업 흐름이 존재하고 그 중 일부분만 자주 바꿔서 사용해야 하는 경우에 적합한 구조다. 전략 패턴의 기본 구조에 익명 내부 클래스를 활용한 방식이다. 이런 방식을 스프링에서는 **템플릿/콜백 패턴**이라고 부른다. 전략 패턴의 컨텍스트를 템플릿이라 부르고, 익명 내부 클래스로 만들어지는 오브젝트를 콜백이라고 부른다.
+
+## 템플릿/콜백의 동작원리
+템플릿은 고정된 작업 흐름을 가진 코드를 재사용한다는 의미에서 붙인 이름이다. 콜백은 템플릿 안에서 호출되는 것을 목적으로 만들어진 오브젝트를 말한다.
+
+### 템플릿/콜백의 특징
+여러 개의 메소드를 가진 일반적인 인터페이스를 사용할 수 있는 전략 패턴의 전략과 달리 템플릿/콜백 패턴의 콜백은 보통 단일 메소드 인터페이스를 사용한다. 하나의 템플릿에서 여러 가지 종류의 전략을 사용해야 한다면 하나 이상의 콜백 오브젝트를 사용할 수도 있다. 콜백은 일반적으로 하나의 메소드를 가진 인터페이스를 구현한 익명 내부 클래스로 만들어진다고 보면 된다.
+
+콜백 인터페이스의 메소드에는 보통 파라미터가 있다. 이 파라미터는 템플릿의 작업 흐름 중에 만들어지는 컨텍스트 정보를 전달받을 때 사용된다. 다음은 템플릿/콜백 패턴의 일반적인 작업 흐름을 보여준다.
+
+![](http://t1.daumcdn.net/section/oc/465408b42c7e404598597ad893268ca6)
+
+조금 복잡해 보이지만 DI 방식의 전략 패턴 구조라고 생각하고 보면 간단하다. 클라이언트가 템플릿 메소드를 호출하면서 콜백 오브젝트를 전달하는 것은 메소드 레벨에서 일어나는 DI다. 일반적인 DI라면 템플릿에 인스턴스 변수를 만들어두고 사용할 의존 오브젝트를 수정자 메소드로 받아서 사용할 것이다. 반면에 템플릿/콜백 방식에서는 매번 메소드 단위로 사용할 오브젝트를 새롭게 전달 받는다는 것이 특징이다.
+
+콜백 오브젝트가 내부 클래스로서 자신을 생성한 클라이언트 메소드 내의 정보를 직접 참조한다는 것도 템플릿/콜백의 고유한 특징이다. 클라이언트와 콜백이 강하게 결합된다는 면에서도 일반적인 DI와 조금 다르다.
+
+템플릿/콜백 방식은 전략 패턴과 DI의 장점을 익명 내부 클래스 사용 전략과 결합한 독특한 활용법이라고 이해할 수 있다. 
+
+### JdbcContext에 적용된 템플릿/콜백
+앞에서 만들었던 UserDao, JdbcContext와 StatementStrategy의 코드에 적용된 템플릿/콜백 패턴을 한 번 살펴보자. 템플릿과 클라이언트가 메소드 단위인 것이 특징이다.
+
+![](http://t1.daumcdn.net/section/oc/bc7a262084cf467dabdbffa75866498b)
+
+## 편리한 콜백의 재활용
+템플릿/콜백 방식은 템플릿에 담긴 코드를 여기저기서 반복적으로 사용하는 원시적인 방법에 비해 많은 장점이 있다. 그런데 템플릿/콜백 방식에서 한 가지 아쉬운 점이 있다. DAO 메소드에서 매번 익명 내부 클래스를 사용하기 때문에 상대적으로 코드를 작성하고 읽기가 조금 불편하다는 점이다.
+
+### 콜백의 분리와 재활용
+그래서 이번에는 복잡한 익명 내부 클래스의 사용을 최소화할 수 있는 방법을 찾아보자.
+
+```
+public void deleteAll() throws SQLException {
+	this.jdbcContext.workWithStatementStrategy(
+		new StatementStrategy() {
+			public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+				return c.prepareStatement("delete from users");    // 변하는 SQL 문장
+			}
+		}
+	);
+}
+```
+
+StatementStrategy 인터페이스의 makePreparedStatement() 메소드를 구현한 콜백 오브젝트 코드를 살펴보면 그 내용은 간단하다. 고정된 SQL 쿼리 하나를 담아서 PreparedStatement를 만드는 게 전부다. 그렇다면, 언제나 그랬듯이 중복될 가능성이 있는 자주 바뀌지 않는 부분을 분리해보자.
+
+```
+public void deleteAll() throws SQLException {
+    executeSql("delete from users");    // 변하는 SQL 문장
+}
+
+private void executeSql(final String query) throws SQLException {
+	this.jdbcContext.workWithStatementStrategy(
+		// 변하지 않는 콜백 클래스 정의와 오브젝트 생성
+		new StatementStrategy() {
+			public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+				return c.prepareStatement(query);
+			}
+		}
+	);
+}
+```
+
+이렇게 해서 재활용 가능한 콜백을 담은 메소드가 만들어졌다. 이제 모든 고정된 SQL을 실행하는 DAO 메소드는 deleteAll() 메소드처럼 executeSql()을 호출하는 한 줄이면 끝이다. 복잡한 익명 내부 클래스인 콜백을 직접 만들 필요조차 없어졌다.
+
+### 콜백과 템플릿의 결합
+executeSql() 메소드는 UserDao만 사용하기는 아깝다. 이렇게 재사용 가능한 콜백을 담고있는 메소드라면 DAO가 공유할 수 있는 템플릿 클래스 안으로 옮겨도 된다. 엄밀히 말해서 템플릿은 JdbcContext 클래스가 아니라 workWithStatementStrategy() 메소드이므로 JdbcContext 클래스로 콜백 생성과 템플릿 호출이 담긴 executeSql() 메소드를 옮긴다고 해도 문제 될 것은 없다.
+
+```
+public class JdbcContext {
+	....
+		
+	public void executeSql(final String query) throws SQLException {
+		workWithStatementStrategy(
+			new StatementStrategy() {
+				public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+					return c.prepareStatement(query);
+				}
+			}
+		);
+	}
+}
+```
+
+이제 모든 DAO 메소드에서 executeSql() 메소드를 사용할 수 있게 됐다. 익명 내부 클래스의 사용으로 조금 복잡해 보였던 클라이언트 메소드는 이제 깔끔하고 단순해졌다. 결국 JdbcContext 안에 클라이언트와 템플릿, 콜백이 모두 함께 공존하면서 동작하는 구조가 됐다.
+
+![](http://t1.daumcdn.net/section/oc/770a80d4ac1f428daf857fc3413e2202)
+
+일반적으로는 성격이 다른 코드들은 가능한 한 분리하는 편이 낫지만, 이 경우는 반대다. 하나의 목적을 위해 서로 긴밀하게 연관되어 동작하는 응집력이 강한 코드들이기 때문에 한 군데 모여 있는 게 유리하다. 구체적인 구현과 내부의 전략 패턴, 코드에 의한 DI, 익명 내부 클래스 등의 기술은 최대한 감춰두고, 외부에는 꼭 필요한 기능을 제공하는 단순한 메소드만 노출해주는 것이다.
