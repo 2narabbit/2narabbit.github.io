@@ -500,3 +500,173 @@ public void add(final User user) throws SQLException {
 	);
 }
 ```
+
+# 컨텍스트와 DI
+
+## JdbcContext의 분리
+
+JDBC의 일반적인 작업 흐름을 담고 있는 jdbcContextWithStatementStrategy()는 다른 DAO에서도 사용 가능하다. 그러니 jdbcContextWithStatementStrategy()를 UserDao 클래스 밖으로 독립시켜서 모든 DAO가 사용할 수 있게 해보자.
+
+### 클래스 분리
+
+```
+public class JbdcContext {
+	// DataSource 타입 빈을 DI 받을 수 있게 준비해둔다.
+	private DataSource dataSource;
+
+	public void setDataSource(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}
+
+	public void workWithStatementStrategy(StatementStrategy stmt) throws SQLException {
+		Connection c = null;
+		PreparedStatement ps = null;
+
+		try {
+			c = this.dataSource.getConnection();
+
+			ps = stmt.makePreparedStatement(c);
+
+			ps.executeUpdate();
+		} catch (SQLException e) {
+			throw e;
+		} finally {
+			....
+		}
+	}
+}
+```
+
+UserDao가 분리된 JdbcContext를 DI 받아서 사용할 수 있게 만든다.
+
+```
+public class UserDao {
+	....
+	
+	// jdbcContext를 DI받도록 만든다.
+	private JdbcContext jdbcContext;
+
+	public void setJdbcContext(JdbcContext jdbcContext) {
+		this.jdbcContext = jdbcContext;
+	}
+
+	public void add(final User user) throws SQLException {
+		// DI 받은 JdbcContext의 컨텍스트 메소드를 사용하도록 변경한다.
+		this.jdbcContext.workWithStatementStrategy(
+			new StatementStrategy() { ... }
+		);
+	}
+
+	....
+}
+```
+
+### 빈 의존관계 변경
+
+새롭게 작성된 오브젝트 간의 의존관계를 스프링 설정에 적용해보자.
+
+UserDao는 이제 JdbcContext에 의존하고 있다. 그런데 JdbcContext는 인터페이스인 DataSource와는 달리 구체 클래스다. 스프링의 DI는 기본적으로 인터페이스를 사이에 두고 의존 클래스를 바꿔서 사용하도록 하는 게 목적이다. 하지만 이 경우 JdbcContext는 그 자체로 독립적인 JDBC 컨텍스트를 제공해주는 서비스 오브젝트로서 의미가 있을 뿐이고 구현 방법이 바뀔 가능성은 없다. 따라서 인터페이스를 구현하도록 만들지않았고, UserDao와 JdbcContext는 인터페이스를 사이에 두지 않고 DI를 적용하는 특별한 구조가 된다.
+
+스프링의 빈 설정은 클래스 레벨이 아니라 런타임 시에 만들어지는 오브젝트 레벨의 의존관계에 따라 정의된다. 기존에는 userDao 빈이 dataSource 빈을 직접 의존했지만 이제는 jdbcContext 빈이 그 사이에 끼게 된다.
+
+빈 의존관계를 따라서 XML 설정파일을 수정하자.
+
+```
+<beans>
+	<bean id="userDao" class="....UserDao">
+		// UserDao 내에 아직 JdbcContext를 적용하지 않은 메소드가 있어서 제거하지 않았다.
+		<property name="dataSource" ref="dataSource" />
+		<property name="jdbcContext" ref="jdbcContext" />
+	</bean>
+
+	// 추가된 JdbcContext 타입 빈
+	<bean id="jdbcContext" class="....JdbcContext">
+		<property name="dataSource" ref="dataSource" />
+	</bean>
+
+	<bean id="dataSource" class="....SimpleDriverDataSource">
+		....
+	</bean>
+</beans>
+```
+
+## JdbcContext의 특별한 DI
+JdbcContext를 분리하면서 사용했던 DI 방법에 대해 좀 더 생각해보자. UserDao와 JdbcContext 사이에는 인터페이스를 사용하지 않고 DI를 적용했다. UserDao와 JdbcContext는 클래스 레벨에서 의존관계가 결정된다. 비록 런타임 시에 DI 방식으로 외부에서 오브젝트를 주입해주는 방식을 사용하긴 했지만, 의존 오브젝트의 구현 클래스를 변경할 수는 없다.
+
+### 스프링 빈으로 DI
+DI라는 개념을 충실히 따르자면, 인터페이스를 사이에 둬서 클래스 레벨에서는 의존관계가 고정되지 않게 하고, 런타임 시에 의존할 오브젝트와의 관계를 다이나믹하게 주입해주는 것이 맞다. 따라서 *인터페이스를 사용하지 않았다면 엄밀히 말해서 온전한 DI라고 볼 수는 없다.*
+
+인터페이스를 사용해서 클래스를 자유롭게 변경할 수 있게 하지는 않았지만, JdbcContext를 UserDao와 DI 구조로 만들어야 할 이유를 생각해보자.
+
+첫째는 JdbcContext가 스프링 컨테이너의 싱글톤 레지스트리에서 관리되는 싱글톤 빈이 되기 때문이다. JdbcContext는 JDBC 컨텍스트 메소드를 제공해주는 일종의 서비스 오브젝트로서 의미가 있고, 그래서 싱글톤으로 등록돼서 여러 오브젝트에서 공유해 사용되는 것이 이상적이다.
+
+둘째는 JdbcContext가 DI를 통해 다른 빈에 의존하고 있기 때문이다. JdbcContext는 dataSource 프로퍼티를 통해 DataSource 오브젝트를 주입받도록 되어있다. DI를 위해서는 주입되는 오브젝트와 주입받는 오브젝트 양쪽 모두 스프링 빈으로 등록돼야 한다. 따라서 JdbcContext는 다른 빈을 DI 받기 위해서라도 스프링 빈으로 등록돼야 한다.
+
+실제로 스프링에는 드물지만 이렇게 인터페이스를 사용하지 않는 클래스를 직접 의존하는 DI가 등장하는 경우도 있다.
+
+여기서 중요한 것은 인터페이스의 사용 여부다. 왜 인터페이스를 사용하지 않았을까? 인터페이스가 없다는 건 UserDao와 JdbcContext가 매우 긴밀한 관계를 가지고 강하게 결합되어 있다는 의미다. 비록 클래스는 구분되어 있지만 이 둘은 강한 응집도를 가지고 있다. UserDao가 JDBC 방식 대신 JAP나 하이버네이트 같은 ORM을 사용해야 한다면 JdbcContext도 통째로 바뀌어야 한다. JdbcContext는 DataSource와 달리 테스트에서도 다른 구현으로 대체해서 사용할 이유가 없다. 
+
+이런 경우는 굳이 인터페이스를 두지 말고 강력한 결합을 가진 관계를 허용하면서 위에서 말한 두 가지 이유인, 싱글톤으로 만드는 것과 JdbcContext에 대한 DI 필요성을 위해 스프링의 빈으로 등록해서 UserDao에 DI되도록 만들어도 좋다.
+
+단, 이런 클래스를 바로 사용하는 코드 구성을 DI에 적용하는 것은 가장 마지막 단계에서 고려해볼 사항임을 잊지 말자. 그저 인터페이스를 만들기가 귀찮으니까 그냥 클래스를 사용하자는 건 잘못된 생각이다. 
+
+### 코드를 이용하는 수동 DI
+JdbcContext를 스프링의 빈으로 등록해서 UserDao에 DI하는 대신 사용할 수 있는 방법이 있다. UserDao 내부에서 직접 DI를 적용하는 방법이다. 이 방법을 쓰려면 JdbcContext를 싱글톤으로 만들려는 것은 포기해야 한다.
+
+JdbcContext를 스프링 빈으로 등록하지 않았으므로 다른 누군가가 JdbcContext의 생성과 초기화를 책임져야 한다. JdbcContext의 제어권은 UserDao가 갖는 것이 적당하다. 
+
+JdbcContext는 다른 빈을 인터페이스를 통해 간접적으로 의존하고 있다. 다른 빈을 의존하고 있다면, 의존 오브젝트를 DI를 통해 제공받기 위해서라도 자신도 빈으로 등록돼야 한다고 했다. 그렇다면 UserDao에서 JdbcContext를 직접 생성해서 사용하는 경우에는 어떠게 해야 할까? JdbcContext가 스프링의 빈이 아니니 DI 컨테이너를 통해 DI 받을 수는 없다. UserDao에게 DI까지 맡겨버리자. JdbcContext에 주입해줄 의존 오브젝트인 DataSource는 UserDao가 대신 DI 받도록 하면 된다.
+
+먼저 설정파일에 등록했던 JdbcContext 빈을 제거한다. UserDao의 jdbcContext 프로퍼티도 제거한다. 그리고 UserDao는 DataSource 프로퍼티만 갖도록한다.
+
+```
+<beans>
+	<bean id="userDao" class="....UserDao">
+		<property name="dataSource" ref="dataSource" />
+	</bean>
+
+	<bean id="dataSource" class="....SimpleDriverDataSource">
+		....
+	</bean>
+</beans>
+```
+
+설정파일만 보자면 UserDao가 직접 DataSource를 의존하고 있는 것 같지만, 내부적으로는 JdbcContext를 통해 간접적으로 DataSource를 사용하고 있을 뿐이다.
+
+UserDao는 이제 JdbcContext를 외부에서 주입받을 필요가 없으니 setJdbcContext()는 제거한다. 그리고 setDataSource()를 다음과 같이 수정한다.
+
+```
+public class UserDao {
+	....
+	private JdbcContext jdbcContext;
+
+	// 수정자 메소드이면서 JdbcContext에 대한 생성, DI 작업을 동시에 수행
+	public void setDataSource(DataSource dataSource) {
+		// JdbcContext 생성(IoC)
+		this.jdbcContext = new JdbcContext();
+
+		// 의존 오브젝트 주입 (DI)
+		this.jdbcContext.setDataSource(dataSource);
+
+		// 아직 JdbcContext를 적용하지 않은 메소드를 위해 저장해둔다.
+		this.dataSouce = dataSource;
+	}
+}
+```
+
+setDataSource() 메소드는 DI 컨테이너가 DataSource 오브젝트를 주입해줄 때 호출된다. 이때 JdbcContext에 대한 수동 DI작업을 진행하면 된다.
+
+이 방법의 장점은 굳이 인터페이스를 두지 않아도 될 만큼 긴밀한 관계를 갖는 DAO클래스와 JdbcContext를 어색하게 따로 빈으로 분리하지 않고 내부에서 직접 만들어 사용하면서도 다른 오브젝트에 대한 DI를 적용할 수 있다는 점이다. 이렇게 한 오브젝트의 수정자 메소드에서 다른 오브젝트를 초기화하고 코드를 이용해 DI하는 것은 스프링에서도 종종 사용되는 기법이다.
+
+
+지금까지 JdbcContext와 같이 인터페이스를 사용하지 않고 DAO와 밀접한 관계를 갖는 클래스를 DI에 적용하는 방법 두 가지를 알아봤다. 두 가지 방법 모두 장단점이 있다.
+
+*스프링의 DI를 이용한 방법*
+* 장점 : 오브젝트 사이의 실제 의존관계가 설정파일에 명확하게 드러남
+* 단점 : DI의 근본적인 원칙에 부합하지 않는 구체적인 클래스와의 관계가 설정에 직접 노출됨
+
+*코드를 이용해 수동으로 DI를 하는 방법*
+* 장점 : JdbcContext가 UserDao의 내부에서 만들어지고 사용되면서 그 관계를 외부에는 드러내지 않음. 필요에 따라 내부에서 은밀히 DI를 수행하고 그 전략을 외부에는 감출 수 있음
+* 단점 : JdbcContext를 여러 오브젝트가 사용하더라도 싱글톤으로 만들 수 없고, DI 작업을 위한 부가적인 코드가 필요함
+
+일반적으로 어떤 방법이 더 낫다고 말할 수는 없다. 상황에 따라 적절하다고 판단되는 방법을 선택해서 사용하면 된다. 다만 왜 그렇게 선택했는지에 대한 분명한 이유와 근거는 있어야 한다. *분명하게 설명할 자신이 없다면 차라리 인터페이스를 만들어서 평범한 DI 구조로 만드는 게 나을 수도 있다.*
