@@ -917,7 +917,7 @@ public interface LineCallback {
 LineCallback은 파일의 각 라인과 현재까지 계산한 값을 넘겨주도록 되어 있다. 그리고 새로운 계산 결과를 리턴 값을 통해 다시 전달받는다. 이 콜백을 기준으로 코드를 다시 정리해보면 템플릿에 포함되는 작업 흐름은 더 많아지고 콜백은 단순해질 것이다.
 
 ```
-public Integer lineReadTemplate(String filepath, BufferedReaderCallback callback, int initVal) throws IOException {
+public Integer lineReadTemplate(String filepath, LineCallback callback, int initVal) throws IOException {
 	BufferedReader br = null;
 	
 	try {
@@ -968,3 +968,58 @@ public Integer calcMultiply(String filepath) throws IOException {
 	return lineReadTemplate(filepath, multiplyCallback, 1);
 }
 ```
+
+여타 로우레벨의 파일 처리 코드가 템플릿으로 분리되고 순수한 계산 로직만 남아 있기 때문에 코드의 관심이 무엇인지 명확하게 보인다. Calculator 클래스와 메소드는 데이터를 가져와 계산한다는 핵심 기능에 충실한 코드만 갖고 있게 됐다.
+
+### 제네릭스를 이용한 콜백 인터페이스
+지금까지 사용한 LineCallback과 lineReadTemplate()은 템플릿과 콜백이 만들어내는 결과가 Integer 타입으로 고정되어 있다. 만약 결과의 타입을 다양하게 가져가고 싶다면, 자바 언어에 타입 파라미터라는 개념을 도입한 제네릭스를 이용하면 된다. 
+
+파일의 각 라인에 있는 문자를 모두 연결해서 하나의 스트링으로 돌려주는 기능을 만든다고 생각해보자. 이번에는 템플릿이 리턴하는 타입이 스트링이어야 한다. 콜백의 작업 결과도 스트링이어야 한다. 기존에 만들었던 Integer 타입의 결과만 다루는 콜백과 템플릿을 스트링 타입의 값도 처리할 수 있도록 확장해보자.
+
+```
+public interface LineCallback<T> {
+	T doSomethingWithLine(String line, T value);
+}
+```
+
+```
+public <T> T lineReadTemplate(String filepath, LineCallback<T> callback, T initVal) throws IOException {
+	BufferedReader br = null;
+	
+	try {
+		br = new BufferedReader(new FileReader(filepath));
+		T res = initVal;
+		String line = null;
+		while((line = br.readLine()) != null) {
+			res = callback.doSomethingWithLine(line, res);
+		}
+		return res;
+	} catch (IOException e) {
+		System.out.println(e.getMessage());
+		throw e;
+	} finally {
+		if (br != null) {
+			try { br.close(); }
+			catch(IOException e) { System.out.println(e.getMessage()); }
+		}
+	}
+}
+```
+
+lineReadTemplate() 메소드는 이제 타입 파라미터 T를 갖는 인터페이스 LineCallback 타입의 오브젝트와 T 타입의 초기값 initVal을 받아서, T 타입의 변수 res를 정의하고, T 타입 파라미터로 선언된 LineCallback의 메소드를 호출해서 처리한 후에 T 타입의 결과를 리턴하는 메소드가 되는 것이다. 이제 LineCallback 콜백과 lineReadTemplate() 템플릿은 파일의 라인을 처리해서 T 타입의 결과를 만들어내는 범용적인 템플릿/콜백이 됐다.
+
+이제 파일의 모든 라인의 내용을 하나의 문자열로 길게 연결하는 기능을 가진 메소드를 추가해보자.
+
+```
+public String concatenate(String filepath) throws IOException {
+	LineCallback<String> concatenateCallback = 
+		new LineCallback<String>() {
+			public String doSomethingWithLine(String line, String value) {
+				return value + line;
+			}
+		};
+	return lineReadTemplate(filepath, concatenateCallback, "");
+}
+```
+
+이렇게 범용적으로 만들어진 템플릿/콜백을 이용하면 파일을 라인 단위로 처리하는 다양한 기능을 편리하게 만들 수 있다.
