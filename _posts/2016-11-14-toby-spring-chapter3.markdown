@@ -1023,3 +1023,142 @@ public String concatenate(String filepath) throws IOException {
 ```
 
 이렇게 범용적으로 만들어진 템플릿/콜백을 이용하면 파일을 라인 단위로 처리하는 다양한 기능을 편리하게 만들 수 있다.
+
+# 스프링의 JdbcTemplate
+이번에는 스프링이 제공하는 템플릿/콜백 기술을 살펴보자. 스프링은 JDBC를 이용하는 DAO에서 사용할 수 있도록 준비된 다양한 템플릿과 콜백을 제공한다. 자주 사용되는 패턴을 가진 콜백은 다시 템플릿에 결합시켜서 간단한 메소드 호출만으로 사용이 가능하도록 만들어져 있기 때문에 템플릿/콜백 방식의 기술을 사용하고 있는지 모르고도 쓸 수 있을 정도로 편리하다. 
+
+스프링이 제공하는 JDBC 코드용 기본 템플릿은 JdbcTemplate이다. 지금까지 만들었던 JdbcContext를 스프링의 JdbcTemplate으로 바꿔보자.
+
+현재 UserDao는 DataSource를 DI받아서 JdbcContext에 주입해 템플릿 오브젝트로 만들어서 사용한다. 이제 JdbcContext를 다음과 같이 JdbcTemplate으로 변경하자. JdbcTemplate은 생성자의 파라미터로 DataSource를 주입하면 된다.
+
+```
+public class UserDao {
+	....
+	private JdbcTemplate jdbcTemplate;
+
+	public void setDataSource(DataSource dataSource) {
+		this.jdbcTemplate = new JdbcTemplate(dataSource);
+
+		this.dataSource = dataSource;
+	}
+}
+```
+
+이제 템플릿을 사용할 준비가 됐다.
+
+## update()
+deleteAll()에 먼저 적용해보자. deleteAll()에 처음 적용했던 콜백은 StatementStrategy 인터페이스의 makePreparedStatement() 메소드다. 이에 대응되는 JdbcTemplate의 콜백은 **PreparedStatementCreator 인터페이스**의 **createPreparedStatement()** 메소드다. 템플릿으로부터 Connection을 제공받아서 PreparedStatement를 만들어 돌려준다는 면에서 구조는 동일하다. PreparedStatementCreator 타입의 콜백을 받아서 사용하는 JdbcTemplate의 템플릿 메소드는 **update()**다.
+
+```
+public void deleteAll() {
+	this.jdbcTemplate.update(
+		new PreparedStatementCreator() {
+			public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+				return con.preparedStatement("delete from users");
+			}
+		}
+	);
+}
+```
+
+앞에서 만들었던 executeSql()은 SQL 문장만 전달하면 미리 준비된 콜백을 만들어서 템플릿을 호출하는 것까지 한 번에 해주는 편리한 메소드였다. JdbcTemplate에도 기능이 비슷한 메소드가 존재한다. 콜백을 받는 update() 메소드와 이름은 동일한데 파라미터로 SQL 문장을 전달한다는 것만 다르다.
+
+```
+public void deleteAll() {
+	this.jdbcTemplate.update("delete from users");
+}
+```
+
+JdbcTemplate은 앞에서 구상만 해보고 만들지는 못했던 add() 메소드에 대한 편리한 메소드도 제공된다. 치환자(= ?)를 가진 SQL로 PreparedStatement를 만들고 함께 제공하는 파라미터를 순서대로 바인딩해주는 기능을 가진 update() 메소드를 사용할 수 있다. SQL과 함께 가변인자로 선언된 파라미터를 제공해주면 된다.
+
+```
+this.jdbcTemplate.update("insert into users(id, name, password) values(?,?,?)", user.getId(), user.getName(), user.getPassword());
+```
+
+## queryForInt()
+다음은 아직 템플릿/콜백 방식을 적용하지 않았던 getCount() 메소드에 JdbcTemplate을 적용해보자.
+
+getCount()에서 사용할 수 있는 템플릿은 PreparedStatementCreator 콜백과 ResultSetExtractor 콜백을 파라미터로 받는 query() 메소드다.
+
+콜백이 두 개 등장하는 조금 복잡해 보이는 구조이지만 템플릿/콜백의 동작방식을 잘 생각해보면 어렵지 않게 이해할 수 있다. 첫 번째 PreparedStatementCreator 콜백은 템플릿으로부터 Connection을 받고 PreparedStatement를 돌려준다. 두 번째 ResultSetExtractor는 템플릿으로부터 ResultSet을 받고 거기서 추출한 결과를 돌려준다.
+
+```
+public int getCount() {
+	return this.jdbcTemplate.query(
+				new PreparedStatementCreator() {
+					public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+						return con.prepareStatement("select count(*) from users");
+					}
+				},
+				new ResultSetExtractor<Integer>() {
+					public Integer extractData(ResultSet rs) throws SQLException, DataAccessException {
+						rs.next();
+						return rs.getInt(1);
+					}
+				}
+			);
+}
+```
+
+한 가지 눈여겨볼 것은 ResultSetExtractor는 제네릭스 타입 파라미터를 갖는다는 점이다. ResultSet에서 추출할 수 있는 값의 타입은 다양하기 때문에 타입 파라미터를 사용한 것이다. ResultSetExtractor 콜백에 지정한 타입은 제네릭 메소드에 적용돼서 query() 템플릿의 리턴 타입도 함께 바뀐다.
+
+위 코드는 재사용하기 좋은 구조다. SQL을 가지고 PreparedStatement를 만드는 첫 번째 콜백은 이미 재사용 방법을 알아봤다. 두 번째 콜백도 간단하다. SQL의 실행 결과가 하나의 정수 값이 되는 경우는 자주 볼 수 있다. 클라이언트에서 콜백의 작업을 위해 특별히 제공할 값도 없어서 단순하다. 손쉽게 ResultSetExtractor 콜백을 템플릿 안으로 옮겨 재활용할 수 있다.
+
+JdbcTemplate은 이런 기능을 가진 콜백을 내장하고 있는 queryForInt()라는 편리한 메소드를 제공한다. Integer 타입의 결과를 가져올 수 있는 SQL 문장만 전달해주면 된다.
+
+```
+public int getCount() {
+	return this.jdbcTemplate.queryForInt("select count(*) from users");
+}
+```
+
+## queryForObject()
+이번엔 get() 메소드에 JdbcTemplate을 적용해보자. get()메소드는 지금까지 만들었던 것 중에서 가장 복잡하다. 일단 SQL은 바인딩이 필요한 치환자를 갖고 있다. 이것까지는 add()에서 사용했던 방법을 적용하면 될 것 같다. 남은 것은 ResultSet에서 getCount()처럼 단순한 값이 아니라 복잡한 User 오브젝트로 만드는 작업이다.
+
+이를 위해, ResultSetExtractor 콜백 대신 RowMapper 콜백을 사용하겠다. ResultSetExtractor는 ResultSet을 한 번 전달받아 알아서 추출작업을 모두 진행하고 최종 결과만 리턴해주면 되는 데 반해, RowMapper는 ResultSet의 로우 하나를 매핑하기 위해 사용되기 때문에 여러 번 호출될 수 있다는 점이다.
+
+기본키 값으로 조회하는 get() 메소드 SQL의 실행 결과는 로우가 하나인 ResultSet이다. ResultSet의 첫 번째 로우에 RowMapper를 적용하도록 만들면 된다. 이번에 사용할 템플릿 메소드는 queryForObject()다.
+
+```
+public User get(String id) {
+	return this.jdbcTemplate.queryForObject("select * from users where id = ?",
+				new Object[] {id},
+				new RowMapper<User>() {
+					public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+						User user = new User();
+						user.setId(rs.getString("id"));
+						user.setName(rs.getString("name"));
+						user.setPassword(rs.getString("password"));
+						return user;
+					}
+				}
+			)
+}
+```
+
+첫 번째 파라미터는 PreparedStatement를 만들기 위한 SQL이고, 두 번째는 여기에 바인딩할 값들이다. update()에서처럼 가변인자를 사용하면 좋겠지만 뒤에 다른 파라미터가 있기 때문에 이 경우엔 가변인자 대신 Object 타입 배열을 사용해야 한다. queryForObject() 내부에서 이 두 가지 파라미터를 사용하는 PreparedStatement 콜백이 만들어질 것이다.
+
+queryForObject()는 SQL을 실행하면 한 개의 로우만 얻을 것이라고 기대한다. 그리고 ResultSet의 next()를 실행해서 첫 번째 로우로 이동시킨 후에 RowMapper 콜백을 호출한다. RowMapper에서는 현재 ResultSet이 가리키고 있는 로우의 내용을 User 오브젝트에 그대로 담아서 리턴해주기만 하면 된다. 
+
+## query()
+RowMapper를 좀 더 사용해보자. 현재 등록되어 있는 모든 사용자 정보를 가져오는 getAll() 메소드를 추가한다.
+
+이번에는 JdbcTemplate의 query() 메소드를 사용하겠다. 앞에서 사용한 queryForObject()는 쿼리의 결과가 로우 하나일 때 사용하고, query()는 여러 개의 로우가 결과로 나오는 일반적인 경우에 쓸 수 있다. query()의 리턴 타입은 List<T>다. query()는 제네릭 메소드로 타입은 파라미터로 넘기는 RowMapper<T> 콜백 오브젝트에서 결정된다.
+
+```
+public List<User> getAll() {
+	return this.jdbcTemplate.query("select * from users order by id",
+				new RowMapper<User>() {
+					public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+						User user = new User();
+						user.setId(rs.getString("id"));
+						user.setName(rs.getString("name"));
+						user.setPassword(rs.getString("password"));
+						return user;
+					}
+				}
+			);
+}
+```
+
+첫 번째 파라미터에는 실행할 SQL 쿼리를 넣는다. 바인딩할 파라미터가 있다면 두번째 파라미터에 추가할 수도 있다. 없다면 생략할 수 있다. 마지막 파라미터는 RowMapper 콜백이다. query() 템플릿은 SQL을 실행해서 얻은 ResultSet의 모든 로우를 열람하면서 로우마다 RowMapper 콜백을 호출한다. RowMapper는 현재 로우의 내용을 User 타입 오브젝트에 매핑해서 돌려준다. 이렇게 만들어진 User 오브젝트는 템플릿이 미리 준비한 List<User> 컬렉션에 추가된다. 모든 로우에 대한 작업을 마치면 모든 로우에 대한 User 오브젝트를 담고 있는 List<User> 오브젝트가 리턴된다.
