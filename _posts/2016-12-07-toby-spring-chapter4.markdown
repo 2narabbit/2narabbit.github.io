@@ -176,3 +176,77 @@ SQLException은 과연 복구가 가능한 예외인가? 99% SQLException은 코
 더군다나 DAO 밖에서 SQLException을 다룰 수 있는 가능성은 거의 없다. 따라서 예외처리 전략을 적용해야 한다. 필요도 없는 기계적인 throws 선언이 등장하도록 방치하지 말고 가능한한 빨리 언체크/런타임 예외로 전환해줘야 한다.
 
 스프링의 JdbcTemplate은 바로 이 예외처리 전략을 따르고 있다. JdbcTemplate 템플릿과 콜백 안에서 발생하는 모든 SQLException을 런타임 예외인 DataAccessException으로 포장해서 던져준다. 그래서 DAO 메소드에서 SQLException이 모두 사라진 것이다.
+
+# 예외 전환
+예외를 다른 것으로 바꿔서 던지는 예외 전환의 목적은 두 가지라고 했다. 하나는 런타임 예외로 포장해서 굳이 필요하지 않은 catch/throws를 줄여주는 것이고, 다른 하나는 로우레벨의 예외를 좀 더 의미 있고 추상화된 예외로 바꿔서 던져주는 것이다.
+
+## JDBC의 한계
+JDBC는 자바를 이용해 DB에 접근하는 방법을 추상화된 API 형태로 정의해놓고, 각 DB업체가 JDBC 표준을 따라 만들어진 드라이버를 제공하게 해준다. 내부구현은 DB마다 다르겠지만 JDBC의 Connection, Statement, ResultSet 등의 표준 인터페이스를 통해 그 기능을 제공해주기 때문에 JDBC API에만 익숙해지면 DB의 종류에 상관없이 일관된 방법으로 프로그램을 개발할 수 있다.
+
+하지만 DB 종류에 상관없이 사용할 수 있는 데이터 액세스 코드를 작성하는 일은 쉽지 않다. 표준화된 JDBC API가 DB 프로그램 개발 방법을 학습하는 부담은 확실히 줄여주지만 DB를 자유롭게 변경해서 사용할 수 있는 유연한 코드를 보장해주지는 못한다. 현실적으로 DB를 자유롭게 바꾸어 사용할 수 있는 DB 프로그램을 작성하는 데는 두 가지 걸림돌이 있다.
+
+### 비표준 SQL
+SQL은 어느 정도 표준화된 언어이고 몇 가지 표준 규약이 있지만, 대부분의 DB는 표준을 따르지 않는 비표준 문법과 기능도 제공한다. 비표준 SQL이 DAO 코드에 들어가게 되면 해당 DAO는 특정 DB에 대해 종속적인 코드가 되고 만다. 다른 DB로 변경하려면 DAO에 담긴 SQL을 적지 않게 수정해야 한다.
+
+### 호환성 없는 SQLException의 DB 에러정보
+DB를 사용하다가 발생할 수 있는 예외의 원인은 다양하다. 문제는 DB마다 SQL만 다른 것이 아니라 에러의 종류와 원인도 제각각이라는 점이다. 그래서 JDBC는 데이터 처리 중에 발생하는 다양한 예외를 그냥 SQLException 하나에 모두 담아버린다. 예외가 발생한 원인은 SQLException 안에 담긴 에러 코드와 SQL 상태정보를 참조해봐야 한다. 그런데 SQLException의 getErrorCode()로 가져올 수 있는 DB 에러 코드는 DB 별로 모두 다르다. DB 벤더가 정의한 고유한 에러 코드를 사용하기 때문이다.
+
+## DB 에러 코드 매핑을 통한 전환
+DB 종류가 바뀌더라도 DAO를 수정하지 않으려면 이 두가지 문제를 해결해야 한다. 먼저 SQLException의 비표준 에러 코드에 대한 해결책을 알아보자.
+
+해결 방법은 DB별 에러 코드를 참고해서 발생한 예외의 원인이 무엇인지 해석해주는 기능을 만드는 것이다. DAO 메소드나 JdbcTemplate등의 코드에서 일일이 DB 별로 에러 코드의 종류를 확인하는 작업을 수행하는 건 부담이 너무 크다. 대신 스프링은 DB별 에러 코드를 분류해서 스프링이 정의한 예외 클래스와 매핑해놓은 에러 코드 매핑정보 테이블을 만들어두고 이를 이용한다.
+
+```
+<bean id="Oracle" class="org.springframework.jdbc.support.SQLErrorCodes">
+	<property name="badSqlGrammarCodes">  // 예외 클래스 종류
+		<value>900,903,904,917</value>    // 매핑되는 DB 에러 코드
+	</property>
+
+	<property name="duplicateKeyCodes">
+		<value>1</value>
+	</property>
+
+	....
+</bean>
+```
+
+JdbcTemplate은 SQLException을 단지 런타임 예외인 DataAccessException으로 포장하는 것이 아니라 DB의 에러 코드를 DataAccessException 계층 구조의 클래스 중 하나로 매핑해준다. 전환되는 JdbcTemplate에서 던지는 예외는 모두 DataAccessException의 서브클래스 타입이다. 드라이버나 DB 메타정보를 참고해서 DB 종류를 확인하고 DB별로 미리 준비된 매핑정보를 참고해서 적절한 예외 클래스를 선택하기 때문에 DB가 달라져도 같은 종류의 에러라면 동일한 예외를 받을 수 있다.
+
+## DAO 인터페이스와 DataAccessException 계층구조
+DataAccessException은 JDBC의 SQLException을 전환하는 용도로만 만들어진 건 아니다. JDBC 외에 자바 데이터 엑세스 기술에서 발생하는 예외에도 적용된다. 자바에는 JDBC 외에도 데이터 액서스를 위한 표준 기술이 존재한다. JDO나 JPA는 JDBC와 마찬가지로 자바의 표준 퍼시스턴스 기술이지만 JDBC와는 성격과 사용 방법이 크게 다르다. 하이버네이트 같이 표준을 따르긴 하지만 독자적인 프로그래밍 모델을 지원하는 ORM 기술도 있다. JDBC를 기반으로 하지만 사용 방법과 발생하는 예외가 다른 iBatis도 있다.
+
+DataAccessException은 의미가 같은 예외라면 데이터 엑세스 기술의 종류와 상관없이 일관된 예외가 발생하도록 만들어준다. 스프링이 왜 이렇게 DataAccessException 계층구조를 이요용해 기술에 독립적인 예외를 정의하고 사용하게 하는지 생각해보자.
+
+
+### DAO 인터페이스와 구현의 분리
+DAO의 사용 기술과 구현 코드는 전략 패턴과 DI를 통해서 DAO를 사용하는 클라이언트에게 감출 수 있지만, 메소드 선언에 나타나는 예외정보가 문제가 될 수 있다. UserDao의 인터페이스를 분리해서 기술에 독립적인 인터페이스로 만들려면 다음과 같이 정의해야 한다.
+
+```
+public interface UserDao {
+	public void add(User user);
+}
+```
+
+하지만 위 메소드 선언은 사용할 수 없다. DAO에서 사용하는 데이터 엑세스 기술의 API가 예외를 던지기 때문이다. 만약 JDBC API를 사용한다면 SQLException을 던질 것이다. 따라서 인터페이스 메소드가 다음과 같이 선언돼야 한다.
+
+```
+public interface UserDao {
+	public void add(User user) throws SQLException;
+}
+```
+
+이렇게 정의한 인터페이스는 JDBC가 아닌 데이터 액세스 기술로 DAO 구현을 전환하면 사용할 수 없다. 데이터 액세스 기술의 API는 자신만의 독자적인 예외를 던지기 때문이다.
+
+```
+public void add(User user) throws PersistentException;    // JPA
+public void add(User user) throws HibernateException;     // Hibernate
+public void add(User user) throws JdoException;           // JDO
+```
+
+결국 인터페이스로 메소드의 구현은 추상화했지만 구현 기술마다 던지는 예외가 다르기 때문에 메소드의 선언이 달라진다는 문제가 발생한다. DAO 인터페이스를 기술에 완전히 독립적으로 만들려면 예외가 일치하지 않는 문제도 해결해야 한다.
+
+### 데이터 엑세스 예외 추상화와 DataAccessException 계층 구조
+그래서 스프링은 자바의 다양한 데이터 엑세스 기술을 사용할 때 발생하는 예외들을 추상화해서 DataAccessException 계층구조 안에 정리해놓았다. DataAccessException은 자바의 주요 데이터 액세스 기술에서 발생할 수 있는 대부분의 예외를 추상화하고 있다.
+
+JdbcTemplate과 같이 스프링의 데이터 액세스 지원 기술을 이용해 DAO를 만들면 사용 기술에 독립적인 일관성 있는 예외를 던질 수 있다. 결국 인터페이스 사용, 런타임 예외 전환과 함께 DataAccessException 예외 추상화를 적용하면 데이터 액세스 기술과 구현 방법에 독립적인 이상적인 DAO를 만들 수가 있다.
+
